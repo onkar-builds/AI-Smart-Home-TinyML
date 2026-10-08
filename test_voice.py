@@ -1,5 +1,4 @@
 import sounddevice as sd
-import wave
 import numpy as np
 from python_speech_features import mfcc
 
@@ -13,6 +12,35 @@ COMMANDS = [
     "FAN_ON",
     "FAN_OFF"
 ]
+
+
+def extract_features(audio):
+
+    features = mfcc(
+        audio,
+        samplerate=SAMPLE_RATE,
+        numcep=N_MFCC
+    )
+
+    mean = features.mean(axis=0)
+    std = features.std(axis=0) + 1e-8
+
+    features = (features - mean) / std
+
+    return features.astype(np.float32)
+
+
+def sequence_distance(a, b):
+
+    # Both recordings normally have the same number of frames.
+    # Compare frame-by-frame MFCC patterns.
+    frames = min(len(a), len(b))
+
+    a = a[:frames]
+    b = b[:frames]
+
+    return np.mean(np.sqrt(np.sum((a - b) ** 2, axis=1)))
+
 
 print("Get ready...")
 input("Press ENTER and say your command...")
@@ -32,45 +60,53 @@ audio = audio.flatten()
 
 print("Recording complete!")
 
-# Extract MFCC
-features = mfcc(
-    audio,
-    samplerate=SAMPLE_RATE,
-    numcep=N_MFCC
+features = extract_features(audio)
+
+training_features = np.load("training_features.npy")
+training_labels = np.load("training_labels.npy")
+
+distances = []
+
+for train_features, label in zip(
+    training_features,
+    training_labels
+):
+
+    distance = sequence_distance(
+        features,
+        train_features
+    )
+
+    distances.append((distance, label))
+
+
+# Sort by closest recordings
+distances.sort(key=lambda x: x[0])
+
+# Take the 5 closest recordings
+top_5 = distances[:5]
+
+votes = {}
+
+for distance, label in top_5:
+
+    votes[label] = votes.get(label, 0) + 1
+
+
+prediction = max(
+    votes,
+    key=votes.get
 )
 
-# Same processing used during training
-features = features.mean(axis=0)
-
-# Load trained prototypes
-prototypes = np.load(
-    "prototypes.npy",
-    allow_pickle=True
-).item()
-
-# Calculate distance from each command prototype
-distances = {}
-
-for label, prototype in prototypes.items():
-
-    distance = np.linalg.norm(features - prototype)
-
-    distances[label] = distance
-
-# Find closest command
-prediction = min(
-    distances,
-    key=distances.get
-)
 
 print("\n-----------------------------")
 print("PREDICTED COMMAND:")
 print(COMMANDS[prediction])
 print("-----------------------------")
 
-print("\nDistances:")
+print("\nClosest recordings:")
 
-for label, distance in distances.items():
+for distance, label in top_5:
 
     print(
         f"{COMMANDS[label]}: "
